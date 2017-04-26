@@ -1,0 +1,7 @@
+{
+    "require": {
+        "php": ">=5.3",
+        "intervention/image": "2.2.2",
+	    "illuminate/http": "4.1.*"
+    }
+}
