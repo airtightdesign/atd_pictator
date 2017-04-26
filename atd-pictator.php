@@ -12,10 +12,6 @@
 class Pictator
 {
     private static $upload_dir;
-    
-    private static $htaccess_src;
-
-    private static $htaccess_debug_src;
 
     private static $htaccess_dst;
 
@@ -25,23 +21,38 @@ class Pictator
 
     private static $sample_img_dst;
 
-    private static $install_notifications = [];
+    private static $docs = 'https://github.com/airtightdesign/atd_pictator';
 
-    private static $docs = 'https://bitbucket.org/airtightdesign/atd_pictator/overview';
+    private static $htaccess_str;
+
+    private static $dirname;
 
     // Since we dynamically detect directories (and we are NOT a real part of the wordpress ecosystem)
     // these variables have to be computed at runtime.  The bottom of this file invokes the init() method.
     public static function init()
     {
         $upload_dir               = wp_upload_dir();
-        
+
         self::$upload_dir         = $upload_dir['basedir'];
-        self::$htaccess_src       = dirname(__FILE__) . '/htaccess_index';
-        self::$htaccess_debug_src = dirname(__FILE__) . '/htaccess_debug';
         self::$htaccess_dst       = self::$upload_dir . '/.htaccess';
         self::$cache_dir          = dirname(__FILE__) . '/cache';
         self::$sample_img_src     = dirname(__FILE__) . '/assets/pictator.jpg';
         self::$sample_img_dst     = self::$upload_dir . '/pictator.jpg';
+
+        self::$dirname            = basename(dirname(__FILE__));
+        
+        self::$htaccess_str       = "# place this file in wp-content/uploads as '.htaccess'\n" . 
+                                    "# mod rewrite MUST be enabled for this to work!\n" . 
+                                    "<IfModule mod_rewrite.c>\n" . 
+                                    "\tRewriteEngine On\n\n" . 
+                                    "\t# must have an image extension\n" . 
+                                    "\tRewriteCond %{REQUEST_URI} \.(gif|jpg|jpeg|png)$\n\n" . 
+                                    "\t# cannot be a directory\n" . 
+                                    "\tRewriteCond %{REQUEST_FILENAME} !-d\n\n" . 
+                                    "\t# must be an existing file\n" . 
+                                    "\tRewriteCond %{REQUEST_FILENAME} -f\n\n" . 
+                                    "\tRewriteRule ^(.*)$ {path} [QSA,L]\n\n" . 
+                                    "</IfModule>";
     }
 
     // returns link to the documentation / README
@@ -56,27 +67,32 @@ class Pictator
     // creates .htaccess file in the uploads directory
     public static function plugin_activated()
     {
+        if (version_compare('5.3.0', PHP_VERSION) >= 0) {
+            self::error("Plugin requires PHP version 5.3.0 or greater.");
+        }
+
         // attempt to create .htaccess file in uploads directory
         if (!self::create_upload_dir()) {
-            self::assignNotification("Unable to create uploads directory.");
+            self::error("Unable to create uploads directory.");
         }
-        
+
         // attempt to create .htaccess file in uploads directory
         if (!self::create_htaccess()) {
-            self::assignNotification("Unable to create .htaccess file. <br>" . self::docs_link());
+            self::error("Unable to create .htaccess file. <br>" . self::docs_link());
         }
 
         // attempt to create cache directory
         if (!self::create_cache_dir()) {
-            self::assignNotification("Unable to create image cache directory.");
+            self::destroy_htaccess();
+            self::error("Unable to create image cache directory.");
         }
 
         // attempt to copy lena.jpg to uploads directory as pictator.jpg
         if (!self::create_sample_image()) {
-            self::assignNotification("Unable to create sample image.");
+            self::destroy_htaccess();
+            self::destroy_cache_dir();
+            self::error("Unable to create sample image.");
         }
-
-        self::outputNotifications();
     }
 
     // deletes .htaccess from the uploads directory
@@ -84,78 +100,78 @@ class Pictator
     {
         // attempt to destroy the sample image file from uploads directory
         if (!self::destroy_sample_image()) {
-            self::assignNotification("Unable to remove sample image file from uploads.");
-        }
-        
-        // attempt to destroy the cache directory
-        if (!self::destroy_cache_dir()) {
-            self::assignNotification("Unable to remove image cache directory.");
-        }
-        
-        // attempt to destroy .htaccess file from uploads directory
-        if (!self::destroy_htaccess()) {
-            self::assignNotification("Unable to remove .htaccess file.");
+            self::error("Unable to remove sample image file from uploads.");
         }
 
-        self::outputNotifications();
+        // attempt to destroy the cache directory
+        if (!self::destroy_cache_dir()) {
+            self::error("Unable to remove image cache directory.");
+        }
+
+        // attempt to destroy .htaccess file from uploads directory
+        if (!self::destroy_htaccess()) {
+            self::error("Unable to remove .htaccess file.");
+        }
     }
-    
+
     // creates an .htaccess file in the uploads directory
     private static function create_upload_dir()
     {
         $success = false;
-        
+
         $upload_dir = self::$upload_dir;
-        
+
         // attempt to create directory
         if (!is_dir($upload_dir)) {
             mkdir($upload_dir);
         }
-        
+
         // set permissions on the directory
         if (is_dir($upload_dir)) {
             @chmod($upload_dir, 0775);
         }
-        
+
         if(is_dir($upload_dir) && is_writable($upload_dir)) {
             $success = true;
         }
-        
+
         return $success;
     }
 
     // creates an .htaccess file in the uploads directory
-    private static function create_htaccess($debug = false)
+    private static function create_htaccess()
     {
         $success = false;
-        
-        $src = $debug ? self::$htaccess_debug_src : self::$htaccess_src;
+
+        $path = '/wp-content/plugins/' . self::$dirname . '/index.php';
+
+        $contents = str_replace('{path}', $path, self::$htaccess_str);
+
         $dst = self::$htaccess_dst;
 
         // only copy it if it doesn't already exist
         if (!file_exists($dst)) {
-            @copy($src, $dst);
+            file_put_contents($dst, $contents);
         }
 
         // if the file exists, we make sure it matches the source file
-        if(file_exists($dst) && md5_file($src) == md5_file($dst)) {
+        if(file_exists($dst) && $contents == file_get_contents($dst)) {
             $success = true;
         }
-        
+
         return $success;
     }
 
     // deletes .htaccess from the uploads directory
-    private static function destroy_htaccess($debug = false)
+    private static function destroy_htaccess()
     {
-        $src = $debug ? self::$htaccess_debug_src : self::$htaccess_src;
         $dst = self::$htaccess_dst;
-        
+
         // if the file exists, we make sure it matches the source file before deleting it
-        if(file_exists($dst) && md5_file($src) == md5_file($dst)) {
+        if (file_exists($dst)) {
             self::unlink($dst);
         }
-        
+
         return !file_exists($dst);
     }
 
@@ -163,7 +179,7 @@ class Pictator
     private static function create_cache_dir()
     {
         $success = false;
-        
+
         $cache_dir = self::$cache_dir;
 
         // attempt to create directory
@@ -175,22 +191,22 @@ class Pictator
         if (is_dir($cache_dir)) {
             @chmod($cache_dir, 0775);
         }
-        
+
         if(is_dir($cache_dir) && is_writable($cache_dir)) {
             $success = true;
         }
-        
+
         return $success;
     }
-    
+
     private static function destroy_cache_dir()
     {
         $cache_dir = self::$cache_dir;
-        
+
         if(file_exists($cache_dir)) {
             self::unlink($cache_dir);
         }
-        
+
         return !file_exists($cache_dir);
     }
 
@@ -227,12 +243,6 @@ class Pictator
     public static function clear_cache_dir()
     {
         self::unlink(self::$cache_dir . "/*");
-    }
-
-    // true IFF the htaccess file in the uploads directory is the same as the local debuggable htaccess version
-    public static function debug_enabled()
-    {
-        return sha1_file(self::$htaccess_debug_src) == sha1_file(self::$htaccess_dst);
     }
 
     // add an admin menu item for the plugin
@@ -284,7 +294,7 @@ class Pictator
                     margin-bottom: 12px;
                     box-sizing: border-box;
                 }
-                
+
                 .block-full {
         	        width: 100%;
         	    }
@@ -310,15 +320,15 @@ class Pictator
                     <p>The cache directory at <?php echo self::$cache_dir; ?> is not writable.</p>
                 </div>
             <?php endif; ?>
-            
+
             <div class="row">
     	        <div class="block block-full">
     	            <h3>Usage</h3>
-    	            
+
     	            <p><a href="https://github.com/airtightdesign/pictator#readme" target="_blank">Usage Guide</a></p>
-    	            
-    	            <p>Potator allows you to use arbitrarily sized images in your css and templates by appending some query parameters to the image source url.</p>
-    	            
+
+    	            <p>Pictator allows you to use arbitrarily sized images in your css and templates by appending some query parameters to the image source url.</p>
+
       	            Available Parameters
                     <pre>
     a - the 'action' to perform (resize|crop - defaults to 'resize')
@@ -328,7 +338,7 @@ class Pictator
     x - the x offset
     y - the y offset
                     </pre>
-                    
+
                     <p><a href="#example-images">Example Images</a></p>
 
     	        </div>
@@ -369,15 +379,30 @@ class Pictator
             	    <form action="options.php" method="post">
             	        <?php settings_fields('atd-pictator'); ?>
             	        <?php do_settings_sections('atd-pictator'); ?>
+
+            	        <p>Please select a PHP image processing extension to be used when generating new images. (Defaults to GD)</p>
+
+            	        <?php if (extension_loaded('gd')): ?>
                         <p>
-                            <input type="radio" name="image_library" id="image-method-gd" value="gd" <?php if (get_option('image_library') == 'gd') { echo "checked"; } ?> />
+                            <input type="radio" name="image_library" id="image-method-gd" value="gd" <?php if (get_option('image_library') == 'gd' || get_option('image_library') == '') { echo "checked"; } ?> />
                             <label for="image-method-gd">GD</label>
                         </p>
+                        <?php else: ?>
+                        <p>
+                            The PHP GD extension is not currently available.
+                        </p>
+                        <?php endif; ?>
 
+                        <?php if (extension_loaded('imagick')): ?>
                         <p>
                             <input type="radio" name="image_library" id="image-method-imagemagick" value="imagick" <?php if (get_option('image_library') == 'imagick') { echo "checked"; } ?> />
-                            <label for="image-method-imagemagick">ImageMagick</label>
+                            <label for="image-method-imagemagick">ImageMagick (Preferred)</label>
                         </p>
+                        <?php else: ?>
+                        <p>
+                            The PHP Imagick extension is not currently available.
+                        </p>
+                        <?php endif; ?>
 
                         <?php submit_button(); ?>
         			</form>
@@ -386,7 +411,7 @@ class Pictator
                 <div class="block">
                     <h3>Debug Output</h3>
                     <p>Displays image information in a text overlay on top of the image. This overlay is added to images while a user is logged in to WordPress.</p>
-                    <?php if (self::debug_enabled()) : ?>
+                    <?php if (get_option('atd_pictator_debug')) : ?>
                     <form action="<?php echo esc_url( admin_url('admin-post.php') ); ?>" method="post">
                         <input type="hidden" name="action" value="pictator_disable_debug">
                         <p class="submit">
@@ -451,8 +476,7 @@ class Pictator
     // callback for admin-posts.php, disables debug mode
     public static function pictator_disable_debug()
     {
-        self::destroy_htaccess();
-        self::create_htaccess();
+        update_option('atd_pictator_debug', false);
         status_header(200);
         wp_redirect(wp_get_referer());
         exit;
@@ -461,8 +485,8 @@ class Pictator
     // callback for admin-posts.php, enables debug mode
     public static function pictator_enable_debug()
     {
-        self::destroy_htaccess();
-        self::create_htaccess(true);
+        update_option('atd_pictator_debug', true);
+        self::clear_cache_dir();
         status_header(200);
         wp_redirect(wp_get_referer());
         exit;
@@ -490,7 +514,7 @@ class Pictator
         $size = 0;
 
         foreach(scandir($dir) as $file) {
-            if (!in_array($file, ['.','..'])) {
+            if (!in_array($file, array('.','..'))) {
                 if (is_dir(rtrim($dir, '/') . '/' . $file)) {
                     $size += self::count_files(rtrim($dir, '/') . '/' . $file);
                 } else {
@@ -517,21 +541,14 @@ class Pictator
         }
     }
 
-    private static function assignNotification($notificationString = '') 
-    {
-        self::$install_notifications[] = $notificationString;
-    }
-    
-    public static function outputNotifications()
+    public static function error($str)
     {
         $styling = "color: #444;font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen-Sans,Ubuntu,Cantarell,'Helvetica Neue',sans-serif;font-size: 13px;";
-        if (self::$install_notifications) {
-            $output = '<div class="error notice" style="' . $styling . '">';
-            $output .= '<p>' . implode(self::$install_notifications) . '</p>';
-            $output .= '</div>';
-            echo $output;
-            die();
-        }
+        $output  = '<div class="error notice" style="' . $styling . '">';
+        $output .= '<p>' . $str . '</p>';
+        $output .= '</div>';
+        echo $output;
+        die();
     }
 }
 

@@ -32,14 +32,14 @@ try {
 		}
 		
 		// check for this plugin being active
-		if (is_plugin_active('atd_pictator/atd-pictator.php')) {
-			
+		if (is_plugin_active(basename(dirname(__FILE__)) . '/atd-pictator.php')) {
+
 			$driver = get_option('image_library');
 			
-			$driver = in_array($driver, ['gd', 'imagick']) ? $driver : 'gd';
+			$driver = in_array($driver, array('gd', 'imagick')) ? $driver : 'gd';
 			
 			// image manipulation object
-			Image::configure(['driver' => $driver]);
+			Image::configure(array('driver' => $driver));
 			
 	        $img = Image::make($img_path);
 	
@@ -72,6 +72,33 @@ try {
 				    $request->query('x'), 
 				    $request->query('y')
 			    );
+	        }
+	        
+	        if (get_option('atd_pictator_debug')) {
+	        	
+		        // write DEBUG query params to text
+				$text = "ATD Pictator DEBUG\n";
+				$text.= "--------------------\n";
+				$text.= "Image: " . basename($request->path()) . "\n";
+				foreach ($request->query() as $key => $val) {
+					$text.= "$key: $val\n";
+				}
+				
+				// write it twice to help reading with overly dark/light images
+				$img->text($text, 10, 22, function($font) {
+				    $font->file('assets/InconsolataLGC-OT/Inconsolata-LGC.otf');
+				    $font->size(12);
+				    $font->color('#000000');
+				});
+				$img->text($text, 11, 21, function($font) {
+				    $font->file('assets/InconsolataLGC-OT/Inconsolata-LGC.otf');
+				    $font->size(12);
+				    $font->color('#ffffff');
+				});
+				
+				// output image
+				echo $img->response();
+				exit;
 	        }
 	        
 	        $img->save($cache_path);
